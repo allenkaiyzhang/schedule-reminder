@@ -17,10 +17,16 @@ def format_schedule_time(start_at: str, timezone_name: str) -> str:
 
 async def send_reminder(bot: Bot, reminder_row) -> None:
     when = format_schedule_time(reminder_row["start_at"], reminder_row["timezone"])
-    text = (
-        "Schedule reminder\n"
-        f"ID: {reminder_row['schedule_id']}\n"
-        f"Time: {when}\n"
-        f"Title: {reminder_row['title']}"
-    )
-    await bot.send_message(chat_id=reminder_row["chat_id"], text=text)
+    lines = [
+        "日程提醒",
+        f"编号：{reminder_row['schedule_id']}",
+        f"时间：{when}",
+        f"标题：{reminder_row['title']}",
+    ]
+    if reminder_row["description"]:
+        lines.append(f"备注：{reminder_row['description']}")
+    if reminder_row["category"]:
+        lines.append(f"分类：{reminder_row['category']}")
+    lines.append("")
+    lines.append("可使用 /snooze 10m 延后最近提醒，或 /done 编号 完成任务。")
+    await bot.send_message(chat_id=reminder_row["chat_id"], text="\n".join(lines))

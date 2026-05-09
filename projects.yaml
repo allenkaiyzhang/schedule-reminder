@@ -1,0 +1,9 @@
+projects:
+  api-report-agent:
+    host: 1.2.3.4
+    port: 22
+    user: deploy
+    service: api-report-agent
+    scripts:
+      status: /opt/api-report-agent/scripts/status.sh
+      logs: /opt/api-report-agent/scripts/logs.sh

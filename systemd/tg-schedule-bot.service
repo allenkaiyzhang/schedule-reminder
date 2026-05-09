@@ -1,5 +1,5 @@
 [Unit]
-Description=Telegram Schedule Bot
+Description=Telegram Schedule Bot and Project Control Center
 After=network-online.target
 Wants=network-online.target
 
@@ -12,12 +12,14 @@ EnvironmentFile=/opt/tg-schedule-bot/.env
 ExecStart=/opt/tg-schedule-bot/.venv/bin/python /opt/tg-schedule-bot/main.py
 Restart=always
 RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=30
 
-# Basic hardening. Adjust ReadWritePaths if DATABASE_PATH points elsewhere.
+# Basic hardening. Adjust ReadWritePaths if DATABASE_PATH or LOG_DIR points elsewhere.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
-ReadWritePaths=/opt/tg-schedule-bot/data
+ReadWritePaths=/opt/tg-schedule-bot/data /opt/tg-schedule-bot/logs
 
 [Install]
 WantedBy=multi-user.target
