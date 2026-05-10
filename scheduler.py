@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -32,7 +33,8 @@ class BotScheduler:
         self.bot = bot
         self.settings = settings
         self.ai_provider = ai_provider
-        self.scheduler = AsyncIOScheduler(timezone=settings.default_timezone)
+        self.timezone = ZoneInfo(settings.default_timezone)
+        self.scheduler = AsyncIOScheduler(timezone=self.timezone)
 
     def start(self) -> None:
         reminder_worker = ReminderWorker(db=self.db, bot=self.bot)
@@ -74,7 +76,11 @@ class BotScheduler:
         )
         self.scheduler.add_job(
             summary_worker.send_morning_summary,
-            CronTrigger(hour=self.settings.morning_summary_hour, minute=0),
+            CronTrigger(
+                hour=self.settings.morning_summary_hour,
+                minute=0,
+                timezone=self.timezone,
+            ),
             id="morning_summary_worker",
             replace_existing=True,
             max_instances=1,
@@ -82,14 +88,20 @@ class BotScheduler:
         )
         self.scheduler.add_job(
             summary_worker.send_evening_summary,
-            CronTrigger(hour=self.settings.evening_summary_hour, minute=0),
+            CronTrigger(
+                hour=self.settings.evening_summary_hour,
+                minute=0,
+                timezone=self.timezone,
+            ),
             id="evening_summary_worker",
             replace_existing=True,
             max_instances=1,
             coalesce=True,
         )
         self.scheduler.start()
-        logger.info("APScheduler 已启动")
+        for job in self.scheduler.get_jobs():
+            logger.info("任务已注册 id=%s next_run_time=%s", job.id, job.next_run_time)
+        logger.info("APScheduler 已启动 timezone=%s", self.timezone)
 
     async def shutdown(self) -> None:
         if self.scheduler.running:
