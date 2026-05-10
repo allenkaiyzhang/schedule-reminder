@@ -49,6 +49,35 @@ HELP_TEXT = """可用命令：
 """
 
 
+HELP_TEXT = """可用命令：
+
+日程管理：
+/start - 开始使用
+/help - 查看帮助
+/add YYYY-MM-DD HH:MM 标题 - 添加日程
+/list - 查看待办
+/today - 查看今天
+/tomorrow - 查看明天
+/edit ID title 新标题 - 修改标题
+/edit ID time YYYY-MM-DD HH:MM - 修改时间
+/edit ID desc 新备注 - 修改备注
+/remind ID 60m,30m,10m - 设置提醒时间
+/snooze 10m - 延后最近提醒
+/repeat ID daily|weekly|monthly - 设置重复
+/done ID - 完成任务
+/delete ID - 取消任务
+
+项目控制台：
+/projects - 查看可用项目
+/status <project> - 查询项目状态
+/logs <project> [lines] - 查询项目日志，默认行数由配置决定，最多 300 行
+
+也可以直接发送自然语言，例如：
+明天下午三点提醒我开会
+每周五晚八点复盘交易
+"""
+
+
 def _is_allowed(settings: Settings, update: Update) -> bool:
     user = update.effective_user
     if not settings.allowed_user_ids:
