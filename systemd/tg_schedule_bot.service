@@ -1,7 +1,8 @@
 [Unit]
-Description=Telegram Schedule Bot
-After=network-online.target
+Description=Telegram adapter for ops-core
+After=network-online.target ops_core.service
 Wants=network-online.target
+Requires=ops_core.service
 
 [Service]
 Type=simple
@@ -12,13 +13,9 @@ EnvironmentFile=/opt/tg_schedule_bot/.env
 ExecStart=/opt/tg_schedule_bot/.venv/bin/python /opt/tg_schedule_bot/main.py
 Restart=always
 RestartSec=5
-KillSignal=SIGINT
-TimeoutStopSec=30
-
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
-ReadWritePaths=/opt/tg_schedule_bot/data /opt/tg_schedule_bot/logs
 
 [Install]
 WantedBy=multi-user.target

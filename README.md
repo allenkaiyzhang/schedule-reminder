@@ -1,112 +1,115 @@
-# tg_schedule_bot
+# ops-core + tg_schedule_bot
 
-Telegram 私人 AI 日程与远程项目通知助手。
+本项目已升级为“多入口 Adapter + ops-core API + 运维 service layer”的结构。
 
-核心原则：
-
-- 日程提醒由本地调度系统负责，AI 只做解析和分析。
-- 远程项目控制只允许执行 `projects.yaml` 中声明的固定脚本。
-- 不允许用户传入自由 shell 命令。
-- Telegram 手动控制命令必须通过白名单。
-
-## 功能
-
-日程命令：
+新的边界是：
 
 ```text
-/start
-/help
-/add YYYY-MM-DD HH:MM 标题
-/list
-/today
-/tomorrow
-/edit ID title|time|desc 新内容
-/snooze 10m
-/repeat ID daily|weekly|monthly
-/remind ID 60m,30m,10m
-/done ID
-/delete ID
+Telegram / Lark / Web / CLI / Agent
+        ↓
+    Adapter
+        ↓
+    ops-core HTTP API
+        ↓
+    service layer
+        ↓
+SSH / SQLite / Notification / Audit
 ```
 
-远程项目控制：
+Telegram Bot 不再直接执行 SSH，不再读取 `projects.yaml`，不再操作 SQLite。它只接收 Telegram 消息，调用 ops-core API，并把结果返回给用户。
+
+## 目录
 
 ```text
-/projects
-/status <project>
-/logs <project> [lines]
-/pull_notifications <project>
-```
-
-通知拉取：
-
-- 定时通过 SSH 执行 `scripts.notifications`
-- 读取远程 JSONL 通知归档
-- 根据 notification `id` 去重
-- Telegram 发送成功后才写入 `pushed_notifications`
-- Telegram 失败时下一轮重试
-
-## 项目结构
-
-```text
-.
+ops-core/
 ├── main.py
 ├── config.py
-├── db.py
-├── handlers.py
-├── notification_puller.py
-├── parser.py
-├── reminder.py
-├── scheduler.py
-├── adapters/
-│   └── ssh_adapter.py
-├── ai/
-├── handlers/
-│   ├── notification_handlers.py
-│   └── project_handlers.py
-├── workers/
 ├── projects.yaml
-├── redeploy.sh
+├── api/
+│   ├── routes_projects.py
+│   ├── routes_notifications.py
+│   └── routes_commands.py
+├── core/
+│   ├── project_registry.py
+│   ├── command_router.py
+│   ├── auth_service.py
+│   ├── status_service.py
+│   ├── logs_service.py
+│   ├── notification_service.py
+│   └── audit_service.py
+├── adapters/
+│   ├── ssh_adapter.py
+│   ├── sqlite_adapter.py
+│   ├── notification_archive_adapter.py
+│   └── audit_log_adapter.py
+├── data/
+├── logs/
 ├── requirements.txt
-└── systemd/
-    └── tg_schedule_bot.service
+└── redeploy.sh
+
+tg_schedule_bot/
+├── main.py
+├── handlers/
+│   └── telegram_handlers.py
+├── adapters/
+│   └── ops_api_client.py
+├── requirements.txt
+└── redeploy.sh
 ```
 
-## .env
+## ops-core 职责
+
+ops-core 统一负责：
+
+- `projects.yaml` 项目白名单
+- 固定 SSH 脚本执行
+- status 查询
+- logs 查询
+- notification pull
+- notification id dedup
+- Telegram notification send_message
+- audit log
+- API Token 校验
+- Telegram 用户权限校验
+- SQLite 状态存储
+
+安全边界：
+
+- 不支持任意 shell
+- 不使用 `shell=True`
+- 用户不能传 SSH 命令
+- 只执行 `projects.yaml` 中声明的 `scripts.status`、`scripts.logs`、`scripts.notifications`
+
+## ops-core 配置
+
+复制配置：
+
+```bash
+cd ops-core
+cp .env.example .env
+```
+
+示例：
 
 ```env
-TELEGRAM_BOT_TOKEN=
-DEFAULT_TIMEZONE=Asia/Singapore
-DATABASE_PATH=./data/schedule.db
-CHECK_INTERVAL_SECONDS=30
-DEFAULT_REMIND_BEFORE_MINUTES=30,10,0
-ALLOWED_USER_IDS=
+OPS_API_TOKEN=change-me
+OPS_API_HOST=0.0.0.0
+OPS_API_PORT=8080
+ALLOWED_USER_IDS=123456789
 
-AI_PROVIDER=disabled
-AI_API_KEY=
-AI_BASE_URL=
-AI_MODEL=
-AI_TIMEOUT_SECONDS=20
-
-MORNING_SUMMARY_HOUR=8
-EVENING_SUMMARY_HOUR=22
-LOG_DIR=./logs
-SQLITE_BUSY_TIMEOUT_MS=5000
-
-SSH_KEY_PATH=/opt/tg_schedule_bot/keys/control_key
+SSH_KEY_PATH=/opt/ops-core/keys/control_key
 SSH_TIMEOUT_SECONDS=10
 DEFAULT_LOG_LINES=80
-PROJECTS_CONFIG_PATH=./projects.yaml
+PROJECTS_CONFIG_PATH=/opt/ops-core/projects.yaml
+DATABASE_PATH=/opt/ops-core/data/ops_core.db
+LOG_DIR=/opt/ops-core/logs
 
-NOTIFICATION_PULL_ENABLED=true
-NOTIFICATION_PULL_INTERVAL_SECONDS=120
-NOTIFICATION_PULL_PROJECTS=api-report-agent
-NOTIFICATION_PULL_LINES=50
+TELEGRAM_BOT_TOKEN=your-telegram-token
 TELEGRAM_NOTIFY_CHAT_ID=
+NOTIFICATION_PULL_LINES=50
 ```
 
-`ALLOWED_USER_IDS` 不为空时，只有白名单用户可以执行手动控制命令。
-
-`TELEGRAM_NOTIFY_CHAT_ID` 用于定时通知推送；手动 `/pull_notifications` 在未配置该值时会推送到当前聊天。
+`ALLOWED_USER_IDS` 为空时，ops-core 默认拒绝所有用户。
 
 ## projects.yaml
 
@@ -123,125 +126,245 @@ projects:
       notifications: /opt/api-report-agent/scripts/notifications_tail.sh
 ```
 
-用户只能传项目名和有限参数，不能传远程命令。
+后续可按项目增加更细权限：
 
-## 远程通知 JSONL
+```yaml
+allowed_user_ids:
+  - 123456789
+allowed_actions:
+  - status
+  - logs
+  - pull_notifications
+```
 
-`notifications_tail.sh` 应输出 JSONL，每行一条通知，例如：
+## API 调用
+
+所有请求必须带：
+
+```text
+Authorization: Bearer <OPS_API_TOKEN>
+X-Channel: telegram
+X-User-Id: 123456789
+```
+
+Telegram 手动拉取通知时还会带：
+
+```text
+X-Chat-Id: <telegram_chat_id>
+```
+
+列项目：
+
+```bash
+curl -H "Authorization: Bearer $OPS_API_TOKEN" \
+  -H "X-Channel: telegram" \
+  -H "X-User-Id: 123456789" \
+  http://127.0.0.1:8080/api/projects
+```
+
+查状态：
+
+```bash
+curl -H "Authorization: Bearer $OPS_API_TOKEN" \
+  -H "X-Channel: telegram" \
+  -H "X-User-Id: 123456789" \
+  http://127.0.0.1:8080/api/projects/api-report-agent/status
+```
+
+查日志：
+
+```bash
+curl -H "Authorization: Bearer $OPS_API_TOKEN" \
+  -H "X-Channel: telegram" \
+  -H "X-User-Id: 123456789" \
+  "http://127.0.0.1:8080/api/projects/api-report-agent/logs?lines=50"
+```
+
+拉取通知：
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer $OPS_API_TOKEN" \
+  -H "X-Channel: telegram" \
+  -H "X-User-Id: 123456789" \
+  -H "X-Chat-Id: 123456789" \
+  http://127.0.0.1:8080/api/projects/api-report-agent/pull-notifications
+```
+
+失败统一返回：
 
 ```json
-{"id":"2026-05-10T12:30:00+08:00-report-ok","level":"info","title":"日报生成完成","time":"2026-05-10T12:30:00+08:00","body":"xxxx","attachments":["/path/to/file"]}
+{
+  "ok": false,
+  "project": "api-report-agent",
+  "action": "status",
+  "error": "ssh_timeout",
+  "message": "远程执行超时"
+}
 ```
 
-Telegram 推送格式：
+## tg_schedule_bot
+
+Telegram Adapter 只依赖 ops-core：
+
+```env
+TELEGRAM_BOT_TOKEN=
+OPS_CORE_BASE_URL=http://127.0.0.1:8080
+OPS_API_TOKEN=
+OPS_API_TIMEOUT_SECONDS=15
+```
+
+支持命令：
 
 ```text
-[api-report-agent] INFO
-标题：日报生成完成
-时间：2026-05-10T12:30:00+08:00
-
-正文：
-xxxx
-
-附件：
-- /path/to/file
+/projects
+/status <project>
+/logs <project> [lines]
+/pull_notifications <project>
 ```
 
-消息长度限制为 3500 字符，超过会截断。
-
-## 数据库
-
-新增通知去重表：
-
-```sql
-CREATE TABLE IF NOT EXISTS pushed_notifications (
-    id TEXT PRIMARY KEY,
-    project TEXT NOT NULL,
-    level TEXT,
-    title TEXT,
-    time TEXT,
-    pushed_at TEXT NOT NULL
-);
-```
-
-## 本地运行
-
-```bash
-python3.11 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-cp .env.example .env
-python main.py
-```
-
-## systemd
-
-只允许使用：
+调用链：
 
 ```text
-tg_schedule_bot.service
+Telegram handler
+    ↓
+tg_schedule_bot/adapters/ops_api_client.py
+    ↓
+HTTP API
+    ↓
+ops-core
 ```
 
-安装：
+## 新增 Adapter
+
+未来新增 Lark、Web UI、CLI、AI Agent 时，只需要实现新的 Adapter：
+
+1. 接收对应入口的用户请求。
+2. 带上 `Authorization`、`X-Channel`、`X-User-Id`。
+3. 调用 ops-core HTTP API。
+4. 展示 API 返回。
+
+不需要修改 `ops-core/core` service layer。
+
+## SSH 与远程脚本
+
+在 ops-core 部署机生成 key：
 
 ```bash
-sudo cp /opt/tg_schedule_bot/systemd/tg_schedule_bot.service /etc/systemd/system/tg_schedule_bot.service
+sudo mkdir -p /opt/ops-core/keys
+sudo ssh-keygen -t ed25519 -f /opt/ops-core/keys/control_key -C "ops-core" -N ""
+sudo chmod 700 /opt/ops-core/keys
+sudo chmod 600 /opt/ops-core/keys/control_key
+```
+
+目标主机创建低权限用户并写入公钥：
+
+```bash
+sudo useradd --system --create-home --shell /bin/bash deploy
+sudo mkdir -p /home/deploy/.ssh
+sudo tee -a /home/deploy/.ssh/authorized_keys
+sudo chmod 700 /home/deploy/.ssh
+sudo chmod 600 /home/deploy/.ssh/authorized_keys
+sudo chown -R deploy:deploy /home/deploy/.ssh
+```
+
+远程脚本示例：
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+systemctl is-active api-report-agent || true
+systemctl --no-pager --full status api-report-agent | tail -n 40
+```
+
+日志脚本示例：
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+LINES="${1:-80}"
+case "$LINES" in ''|*[!0-9]*) LINES=80 ;; esac
+if [ "$LINES" -gt 300 ]; then LINES=300; fi
+journalctl -u api-report-agent -n "$LINES" --no-pager
+```
+
+通知脚本输出 JSONL，每行一条：
+
+```json
+{"id":"evt-001","level":"info","title":"Job done","time":"2026-05-10T10:00:00Z","message":"Report generated"}
+```
+
+## systemd 部署
+
+新增两个 service：
+
+- `systemd/ops_core.service`
+- `systemd/tg_schedule_bot.service`
+
+`tg_schedule_bot.service` 依赖 `ops_core.service`：
+
+```ini
+After=network-online.target ops_core.service
+Requires=ops_core.service
+```
+
+安装示例：
+
+```bash
+sudo cp systemd/ops_core.service /etc/systemd/system/ops_core.service
+sudo cp systemd/tg_schedule_bot.service /etc/systemd/system/tg_schedule_bot.service
 sudo systemctl daemon-reload
-sudo systemctl enable tg_schedule_bot
+sudo systemctl enable ops_core tg_schedule_bot
+sudo systemctl start ops_core
 sudo systemctl start tg_schedule_bot
-sudo systemctl --no-pager --full status tg_schedule_bot
 ```
 
-如果存在旧服务 `tg-schedule-bot.service`，请删除，避免 Telegram polling 多实例冲突：
+查看日志：
 
 ```bash
-sudo systemctl stop tg-schedule-bot
-sudo systemctl disable tg-schedule-bot
-sudo rm -f /etc/systemd/system/tg-schedule-bot.service
-sudo systemctl daemon-reload
+sudo journalctl -u ops_core -f
+sudo journalctl -u tg_schedule_bot -f
 ```
 
-## 如何 redeploy
+## redeploy
 
-脚本路径：
+两个子项目都有独立 `redeploy.sh`：
+
+- `ops-core/redeploy.sh`
+- `tg_schedule_bot/redeploy.sh`
+
+流程一致：
+
+1. `git pull`
+2. 自动创建 `.venv`
+3. `pip install -r requirements.txt`
+4. 检查必要配置
+5. `systemctl daemon-reload`
+6. restart service
+7. 写入 `deploy.log`
+
+## audit log
+
+ops-core 统一写：
 
 ```text
-/opt/tg_schedule_bot/redeploy.sh
+/opt/ops-core/logs/audit.log
 ```
 
-首次设置执行权限：
+字段：
 
-```bash
-chmod +x redeploy.sh
+```text
+timestamp channel user_id action project success/failure duration_ms message
 ```
-
-执行：
-
-```bash
-sudo ./redeploy.sh
-```
-
-`redeploy.sh` 会自动完成：
-
-- `git pull`
-- 检查并创建 `.venv`
-- 使用 `/opt/tg_schedule_bot/.venv/bin/python -m pip` 安装 `requirements.txt`
-- 检查 `.env`、`projects.yaml`、`keys/control_key`
-- `systemctl daemon-reload`
-- 重启 `tg_schedule_bot`
-- 输出 `systemctl --no-pager --full status tg_schedule_bot`
-- 追加写入 `/opt/tg_schedule_bot/deploy.log`
-
-脚本可重复执行，不依赖手工 `activate` venv。
 
 ## 验收
 
-- `/pull_notifications api-report-agent` 可手动拉取
-- 定时任务可自动拉取
-- 同一 notification `id` 不重复推送
-- Telegram 失败时下一轮重试
-- `projects.yaml` 未配置 `notifications` 时给出明确错误
-- 不影响 `/status`、`/logs`
-- 不影响原有日程提醒
-- `redeploy.sh` 可重复执行并追加 `deploy.log`
-- 缺少 `.env`、`projects.yaml`、`keys/control_key` 时 redeploy 失败退出
-- 只保留一个 Telegram polling 服务：`tg_schedule_bot`
+- Telegram Bot 不再直接 SSH
+- Telegram Bot 不再读取 `projects.yaml`
+- Telegram Bot 不再操作 SQLite
+- `/status api-report-agent` 走 ops-core API
+- `/logs api-report-agent 50` 走 ops-core API
+- `/pull_notifications api-report-agent` 走 ops-core API
+- notification id 通过 ops-core SQLite 去重
+- audit log 由 ops-core 写入
+- 未来新增 Lark/Web/CLI/Agent 只需要新增 Adapter
