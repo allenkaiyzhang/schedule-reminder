@@ -123,6 +123,15 @@ class Database:
                         summary TEXT,
                         created_at TEXT
                     );
+
+                    CREATE TABLE IF NOT EXISTS pushed_notifications (
+                        id TEXT PRIMARY KEY,
+                        project TEXT NOT NULL,
+                        level TEXT,
+                        title TEXT,
+                        time TEXT,
+                        pushed_at TEXT NOT NULL
+                    );
                     """
                 )
                 self._ensure_column(conn, "schedules", "category", "TEXT")
@@ -691,3 +700,47 @@ class Database:
                 """,
                 (user_id, since_iso),
             ).fetchall()
+
+    def is_notification_pushed(self, notification_id: str) -> bool:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM pushed_notifications WHERE id = ?",
+                (notification_id,),
+            ).fetchone()
+            return row is not None
+
+    def mark_notification_pushed(
+        self,
+        *,
+        notification_id: str,
+        project: str,
+        level: str | None,
+        title: str | None,
+        time_value: str | None,
+    ) -> None:
+        def op() -> None:
+            with self.connect() as conn:
+                conn.execute("BEGIN")
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO pushed_notifications (
+                        id, project, level, title, time, pushed_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        notification_id,
+                        project,
+                        level,
+                        title,
+                        time_value,
+                        utc_now_iso(),
+                    ),
+                )
+                conn.commit()
+
+        try:
+            self._retry(op, action="mark_notification_pushed")
+        except sqlite3.Error:
+            logger.exception("Failed to mark notification as pushed")
+            raise

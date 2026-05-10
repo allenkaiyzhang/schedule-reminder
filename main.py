@@ -26,6 +26,7 @@ from handlers import (
     tomorrow,
 )
 from scheduler import BotScheduler
+from notification_puller import pull_notifications_job
 
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,16 @@ def _load_project_handlers():
     spec = importlib.util.spec_from_file_location("project_handlers", path)
     if spec is None or spec.loader is None:
         raise RuntimeError("Cannot load project handlers")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_notification_handlers():
+    path = Path(__file__).with_name("handlers") / "notification_handlers.py"
+    spec = importlib.util.spec_from_file_location("notification_handlers", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Cannot load notification handlers")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -81,6 +92,22 @@ async def _post_init(application: Application) -> None:
     )
     application.bot_data["bot_scheduler"] = bot_scheduler
     bot_scheduler.start()
+    settings: Settings = application.bot_data["settings"]
+    if settings.notification_pull_enabled:
+        if application.job_queue is None:
+            logger.error("通知拉取已启用，但 JobQueue 不可用，请检查依赖安装")
+        else:
+            application.job_queue.run_repeating(
+                pull_notifications_job,
+                interval=settings.notification_pull_interval_seconds,
+                first=15,
+                name="notification_puller",
+            )
+            logger.info(
+                "通知拉取任务已启动 interval=%s projects=%s",
+                settings.notification_pull_interval_seconds,
+                ",".join(settings.notification_pull_projects),
+            )
 
 
 async def _post_shutdown(application: Application) -> None:
@@ -126,6 +153,10 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("projects", project_handlers.projects))
     application.add_handler(CommandHandler("status", project_handlers.status))
     application.add_handler(CommandHandler("logs", project_handlers.logs))
+    notification_handlers = _load_notification_handlers()
+    application.add_handler(
+        CommandHandler("pull_notifications", notification_handlers.pull_notifications)
+    )
 
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, natural_language_schedule)

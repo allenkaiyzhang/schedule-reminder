@@ -47,6 +47,18 @@ def _parse_int_list(value: str | None) -> list[int]:
     return result
 
 
+def _parse_bool(value: str | None, default: bool = False) -> bool:
+    if value is None or value.strip() == "":
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _parse_str_list(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 @dataclass(frozen=True)
 class Settings:
     telegram_bot_token: str
@@ -68,6 +80,11 @@ class Settings:
     ssh_timeout_seconds: int
     default_log_lines: int
     projects_config_path: Path
+    notification_pull_enabled: bool
+    notification_pull_interval_seconds: int
+    notification_pull_projects: list[str]
+    notification_pull_lines: int
+    telegram_notify_chat_id: int | None
 
 
 def get_settings() -> Settings:
@@ -96,8 +113,21 @@ def get_settings() -> Settings:
         evening_summary_hour=_parse_int(os.getenv("EVENING_SUMMARY_HOUR"), 22),
         log_dir=Path(os.getenv("LOG_DIR", "./logs")),
         sqlite_busy_timeout_ms=_parse_int(os.getenv("SQLITE_BUSY_TIMEOUT_MS"), 5000),
-        ssh_key_path=Path(os.getenv("SSH_KEY_PATH", "/opt/tg-control-center/keys/control_key")),
+        ssh_key_path=Path(os.getenv("SSH_KEY_PATH", "/opt/tg_schedule_bot/keys/control_key")),
         ssh_timeout_seconds=_parse_int(os.getenv("SSH_TIMEOUT_SECONDS"), 10),
         default_log_lines=_parse_int(os.getenv("DEFAULT_LOG_LINES"), 80),
         projects_config_path=Path(os.getenv("PROJECTS_CONFIG_PATH", "./projects.yaml")),
+        notification_pull_enabled=_parse_bool(
+            os.getenv("NOTIFICATION_PULL_ENABLED"), False
+        ),
+        notification_pull_interval_seconds=_parse_int(
+            os.getenv("NOTIFICATION_PULL_INTERVAL_SECONDS"), 120
+        ),
+        notification_pull_projects=_parse_str_list(
+            os.getenv("NOTIFICATION_PULL_PROJECTS", "api-report-agent")
+        ),
+        notification_pull_lines=_parse_int(os.getenv("NOTIFICATION_PULL_LINES"), 50),
+        telegram_notify_chat_id=(
+            _parse_int(os.getenv("TELEGRAM_NOTIFY_CHAT_ID"), 0) or None
+        ),
     )
