@@ -34,6 +34,28 @@ for required in ".env" "projects.yaml"; do
   fi
 done
 
+set -a
+# shellcheck disable=SC1091
+source "${APP_DIR}/.env"
+set +a
+
+if [ -z "${OPS_API_TOKEN:-}" ]; then
+  echo "Missing required env: OPS_API_TOKEN"
+  exit 1
+fi
+
+if [ -z "${ALLOWED_USER_IDS:-}" ]; then
+  echo "Missing required env: ALLOWED_USER_IDS must not be empty"
+  exit 1
+fi
+
+if [ -z "${SSH_KEY_PATH:-}" ] || [ ! -f "${SSH_KEY_PATH}" ]; then
+  echo "Missing SSH key file configured by SSH_KEY_PATH"
+  exit 1
+fi
+
+mkdir -p "${APP_DIR}/data" "${APP_DIR}/logs"
+
 echo "[5/7] systemctl daemon-reload"
 systemctl daemon-reload
 

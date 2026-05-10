@@ -32,6 +32,26 @@ if [ ! -e "${APP_DIR}/.env" ]; then
   exit 1
 fi
 
+set -a
+# shellcheck disable=SC1091
+source "${APP_DIR}/.env"
+set +a
+
+if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
+  echo "Missing required env: TELEGRAM_BOT_TOKEN"
+  exit 1
+fi
+
+if [ -z "${OPS_CORE_BASE_URL:-}" ]; then
+  echo "Missing required env: OPS_CORE_BASE_URL"
+  exit 1
+fi
+
+if [ -z "${OPS_API_TOKEN:-}" ]; then
+  echo "Missing required env: OPS_API_TOKEN"
+  exit 1
+fi
+
 echo "[5/7] systemctl daemon-reload"
 systemctl daemon-reload
 

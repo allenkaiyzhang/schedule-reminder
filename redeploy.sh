@@ -1,49 +1,36 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_DIR="/opt/tg_schedule_bot"
-SERVICE_NAME="tg_schedule_bot"
-PYTHON_BIN="${APP_DIR}/.venv/bin/python"
-PIP_BIN="${PYTHON_BIN} -m pip"
-DEPLOY_LOG="${APP_DIR}/deploy.log"
+# Convenience orchestrator for the split deployment.
+# For production automation you can also run each service script directly:
+#   /opt/ops-core/redeploy.sh
+#   /opt/tg_schedule_bot/redeploy.sh
 
-mkdir -p "$(dirname "${DEPLOY_LOG}")"
+OPS_CORE_DIR="${OPS_CORE_DIR:-/opt/ops-core}"
+TG_BOT_DIR="${TG_BOT_DIR:-/opt/tg_schedule_bot}"
+DEPLOY_LOG="${DEPLOY_LOG:-./deploy.log}"
+
 exec > >(tee -a "${DEPLOY_LOG}") 2>&1
 
 echo "============================================================"
-echo "Deploy started at $(date -Is)"
-echo "APP_DIR=${APP_DIR}"
-echo "SERVICE_NAME=${SERVICE_NAME}"
+echo "Split deploy started at $(date -Is)"
+echo "OPS_CORE_DIR=${OPS_CORE_DIR}"
+echo "TG_BOT_DIR=${TG_BOT_DIR}"
 
-cd "${APP_DIR}"
-
-echo "[1/7] git pull"
-git pull
-
-echo "[2/7] checking virtualenv"
-if [ ! -x "${PYTHON_BIN}" ]; then
-  python3.11 -m venv "${APP_DIR}/.venv"
+if [ ! -x "${OPS_CORE_DIR}/redeploy.sh" ]; then
+  echo "Missing executable redeploy script: ${OPS_CORE_DIR}/redeploy.sh"
+  exit 1
 fi
 
-echo "[3/7] installing requirements"
-${PIP_BIN} install --upgrade pip
-${PIP_BIN} install -r "${APP_DIR}/requirements.txt"
+if [ ! -x "${TG_BOT_DIR}/redeploy.sh" ]; then
+  echo "Missing executable redeploy script: ${TG_BOT_DIR}/redeploy.sh"
+  exit 1
+fi
 
-echo "[4/7] checking required config files"
-for required in ".env" "projects.yaml" "keys/control_key"; do
-  if [ ! -e "${APP_DIR}/${required}" ]; then
-    echo "Missing required file: ${APP_DIR}/${required}"
-    exit 1
-  fi
-done
+echo "[1/2] redeploy ops-core"
+"${OPS_CORE_DIR}/redeploy.sh"
 
-echo "[5/7] systemctl daemon-reload"
-systemctl daemon-reload
+echo "[2/2] redeploy tg_schedule_bot"
+"${TG_BOT_DIR}/redeploy.sh"
 
-echo "[6/7] restarting service"
-systemctl restart "${SERVICE_NAME}"
-
-echo "[7/7] service status"
-systemctl --no-pager --full status "${SERVICE_NAME}"
-
-echo "Deploy finished at $(date -Is)"
+echo "Split deploy finished at $(date -Is)"

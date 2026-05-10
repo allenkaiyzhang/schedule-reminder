@@ -82,6 +82,8 @@ ops-core 统一负责：
 
 ## ops-core 配置
 
+根目录 `.env.example` 只保留迁移提示。新部署请使用两个子项目各自的配置样例。
+
 复制配置：
 
 ```bash
@@ -206,6 +208,11 @@ curl -X POST \
 ## tg_schedule_bot
 
 Telegram Adapter 只依赖 ops-core：
+
+```bash
+cd tg_schedule_bot
+cp .env.example .env
+```
 
 ```env
 TELEGRAM_BOT_TOKEN=
@@ -332,6 +339,12 @@ sudo journalctl -u tg_schedule_bot -f
 
 - `ops-core/redeploy.sh`
 - `tg_schedule_bot/redeploy.sh`
+
+根目录 `redeploy.sh` 是一个编排脚本，会按顺序调用 `/opt/ops-core/redeploy.sh` 和 `/opt/tg_schedule_bot/redeploy.sh`。也可以通过环境变量覆盖路径：
+
+```bash
+OPS_CORE_DIR=/opt/ops-core TG_BOT_DIR=/opt/tg_schedule_bot ./redeploy.sh
+```
 
 流程一致：
 
