@@ -70,6 +70,8 @@ jobs:
             set -e
             whoami
             cd /opt/schedule-reminder
+            git restore .
+            git clean -fd
             git pull --ff-only
             chmod +x scripts/deploy.sh scripts/smoke_test.sh scripts/tail_logs.sh
             scripts/deploy.sh
