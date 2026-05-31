@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import os
+from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from typing import AsyncIterator
 
+from fastapi import FastAPI
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 from ai import build_ai_provider
@@ -30,6 +34,51 @@ from notification_puller import pull_notifications_job
 
 
 logger = logging.getLogger(__name__)
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    telegram_application: Application | None = None
+    scheduler_enabled = _env_bool("ENABLE_SCHEDULER", False)
+    app.state.scheduler_enabled = scheduler_enabled
+
+    if scheduler_enabled:
+        telegram_application = build_application()
+        await telegram_application.initialize()
+        await _post_init(telegram_application)
+        await telegram_application.start()
+        if telegram_application.updater is None:
+            raise RuntimeError("Telegram updater is not available")
+        await telegram_application.updater.start_polling(allowed_updates=["message"])
+        app.state.telegram_application = telegram_application
+        logger.info("schedule-reminder service started with Telegram polling enabled")
+    else:
+        logger.info("schedule-reminder service started with scheduler disabled")
+
+    try:
+        yield
+    finally:
+        if telegram_application is not None:
+            if telegram_application.updater is not None:
+                await telegram_application.updater.stop()
+            await telegram_application.stop()
+            await _post_shutdown(telegram_application)
+            await telegram_application.shutdown()
+
+
+app = FastAPI(title="schedule-reminder", version="0.1.0", lifespan=lifespan)
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok", "service": "schedule-reminder"}
 
 
 def _load_project_handlers():

@@ -1,5 +1,151 @@
 # ops-core + tg_schedule_bot
 
+## schedule-reminder VPS deployment
+
+This repository can also run as a single `schedule-reminder` service on a VPS.
+The deploy target is `/opt/schedule-reminder`, using Python 3.11+, venv,
+systemd, and a local health endpoint.
+
+### Service entrypoint
+
+The VPS service entrypoint is:
+
+```bash
+uvicorn main:app --host 127.0.0.1 --port 8030
+```
+
+`main:app` is the root FastAPI control app. `GET /health` returns:
+
+```json
+{"status":"ok","service":"schedule-reminder"}
+```
+
+The existing Telegram bot and APScheduler logic are preserved in `main.py`,
+`scheduler.py`, and `workers/`. They start from the FastAPI lifespan only when
+`ENABLE_SCHEDULER=true`. Importing `main:app` in CI does not start polling,
+APScheduler, Telegram calls, email, webhooks, or other external API calls.
+
+### Local development
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+```
+
+For a health-only local run that does not start Telegram polling, set:
+
+```bash
+ENABLE_SCHEDULER=false
+uvicorn main:app --host 127.0.0.1 --port 8030
+curl -fsS http://127.0.0.1:8030/health
+```
+
+To run the original Telegram bot directly:
+
+```bash
+python main.py
+```
+
+### Tests
+
+```bash
+python -m compileall .
+pytest -q
+```
+
+The smoke test expects the service to be running:
+
+```bash
+scripts/smoke_test.sh
+```
+
+### VPS deployment
+
+The expected server checkout path is:
+
+```bash
+/opt/schedule-reminder
+```
+
+Create the server environment file:
+
+```bash
+cd /opt/schedule-reminder
+cp .env.example .env
+chmod 600 .env
+```
+
+Edit `.env` and set real values for `TELEGRAM_BOT_TOKEN`, user IDs, and any
+optional AI/notification settings. Do not commit real secrets.
+
+Manual deploy on the VPS:
+
+```bash
+cd /opt/schedule-reminder
+chmod +x scripts/deploy.sh scripts/smoke_test.sh scripts/tail_logs.sh
+scripts/deploy.sh
+scripts/smoke_test.sh
+```
+
+`scripts/deploy.sh` installs dependencies into `.venv`, installs the systemd
+unit, restarts `schedule-reminder`, runs a health check, prints service status,
+and exits. It never runs uvicorn or Python as a foreground long-running process.
+
+### GitHub Actions deployment
+
+Add these GitHub repository secrets:
+
+```text
+VPS_HOST
+VPS_USER
+VPS_SSH_KEY
+VPS_PORT
+```
+
+Run **Deploy to VPS** manually from GitHub Actions. The workflow SSHes in as
+the configured deploy user, runs `git pull --ff-only`, then executes:
+
+```bash
+scripts/deploy.sh
+scripts/smoke_test.sh
+```
+
+The workflow intentionally does not use `sudo -iu deploy`, `sudo -u deploy`, or
+`su - deploy`; it assumes SSH already logs in as `deploy`.
+
+### systemd management and logs
+
+```bash
+sudo systemctl status schedule-reminder --no-pager --full
+sudo systemctl restart schedule-reminder
+sudo systemctl stop schedule-reminder
+sudo journalctl -u schedule-reminder -n 100 --no-pager
+scripts/tail_logs.sh
+```
+
+### Troubleshooting
+
+`.env missing`: create `/opt/schedule-reminder/.env` from `.env.example`.
+
+`sudo password required`: allow the `deploy` user to run the required
+`systemctl`, `cp` to `/etc/systemd/system`, and `journalctl` commands, or run
+deployment from a user with those privileges.
+
+`git pull permission denied`: verify repository deploy keys, GitHub access, and
+ownership of `/opt/schedule-reminder`.
+
+`service failed`: inspect `sudo systemctl --no-pager --full status
+schedule-reminder` and `sudo journalctl -u schedule-reminder -n 100 --no-pager`.
+
+`health check failed`: verify the service listens on `127.0.0.1:8030`, then run
+`curl -fsS http://127.0.0.1:8030/health`.
+
+`scheduler not started`: check `ENABLE_SCHEDULER=true`, `TELEGRAM_BOT_TOKEN`,
+and journal logs for startup errors. With `ENABLE_SCHEDULER=false`, only the
+FastAPI health/control service starts.
+
 本项目已升级为“多入口 Adapter + ops-core API + 运维 service layer”的结构。
 
 新的边界是：

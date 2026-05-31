@@ -95,7 +95,9 @@ def get_settings() -> Settings:
     provider = os.getenv("AI_PROVIDER", "disabled").strip().lower() or "disabled"
     return Settings(
         telegram_bot_token=token,
-        default_timezone=os.getenv("DEFAULT_TIMEZONE", "Asia/Singapore").strip()
+        default_timezone=os.getenv(
+            "DEFAULT_TIMEZONE", os.getenv("TIMEZONE", "Asia/Singapore")
+        ).strip()
         or "Asia/Singapore",
         database_path=Path(os.getenv("DATABASE_PATH", "./data/schedule.db")),
         check_interval_seconds=_parse_int(os.getenv("CHECK_INTERVAL_SECONDS"), 30),
