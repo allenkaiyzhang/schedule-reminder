@@ -1,14 +1,14 @@
 import os
 
-os.environ["ENABLE_SCHEDULER"] = "false"
-os.environ["DISABLE_NOTIFICATIONS"] = "true"
-
 from fastapi.testclient import TestClient
 
-from main import app
+os.environ["ENABLE_BOT"] = "false"
+os.environ["DISABLE_TELEGRAM_SEND"] = "true"
+
+from app.main import app  # noqa: E402
 
 
-def test_health() -> None:
+def test_health_without_telegram_network_calls() -> None:
     with TestClient(app) as client:
         response = client.get("/health")
 

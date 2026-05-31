@@ -8,9 +8,12 @@ Type=simple
 User=deploy
 Group=deploy
 WorkingDirectory=/opt/schedule-reminder
-EnvironmentFile=/opt/schedule-reminder/.env
+EnvironmentFile=-/opt/schedule-reminder/.env
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/opt/schedule-reminder/.venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8030
+ExecStart=/opt/schedule-reminder/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8030
+ReadWritePaths=/opt/schedule-reminder/data /opt/schedule-reminder/logs
+NoNewPrivileges=true
+PrivateTmp=true
 Restart=always
 RestartSec=5
 StandardOutput=journal

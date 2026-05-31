@@ -1,108 +1,120 @@
-# ops-core + tg_schedule_bot
+# schedule-reminder
 
-## schedule-reminder VPS deployment
+`schedule-reminder` is a standalone Telegram reminder bot. It owns only bot-local
+reminder functionality: Telegram commands, SQLite persistence, a scheduler,
+health checks, logs, tests, and venv + systemd deployment.
 
-This repository can also run as a single `schedule-reminder` service on a VPS.
-The deploy target is `/opt/schedule-reminder`, using Python 3.11+, venv,
-systemd, and a local health endpoint.
+This project does not manage other services. It does not SSH into other hosts.
+It does not read other projects' logs. Future ops-core or multi-project control
+planes should be implemented in a separate repository.
 
-### Configuration registry
+## Architecture
 
-Non-sensitive configuration lives in `registry.yaml`. This file is the project
-registry for values that are shared, repeated, or operationally useful:
+```text
+FastAPI app.main:app
+  /health
+  lifespan
+    Telegram polling
+    APScheduler due-reminder scan
+SQLite reminder store
+Local rotating log file + journalctl
+```
 
-- service name, target, runtime user, server path, host, port, health path
-- Python version and venv directory
-- data/log/database paths
-- scheduler intervals, reminder defaults, summary hours, timezone
-- notification pull settings that are not secrets
-- AI provider/model/base URL/timeout, but not the API key
-- systemd metadata and GitHub Actions secret names
+The root `main.py` is only a compatibility entrypoint that imports
+`app.main:app`.
 
-`.env` is reserved for sensitive deployment values only:
+## Commands
 
-- Telegram bot token
-- API keys and bearer tokens
-- chat IDs and allowed user IDs
-- webhook URLs or other private integration endpoints
+- `/start`: intro and command list
+- `/help`: usage examples
+- `/remind 2026-06-01 09:30 Take medicine`
+- `/remind 2026-06-01 09:30 Asia/Shanghai Take medicine`
+- `/remind in 10m Take a break`
+- `/remind in 2h Check report`
+- `/list`: list active and paused reminders for the current Telegram user
+- `/delete <id>`: soft-delete your own reminder
+- `/pause <id>`: pause your own reminder
+- `/resume <id>`: resume your own reminder
+- `/status`: bot-local status only
+- `/logs [lines]`: bot-local logs only, clamped to a safe maximum
 
-Rule for future changes: add non-sensitive settings to `registry.yaml`; add only
-secrets or restricted identifiers to `.env`. The root service reads its default
-runtime settings from `registry.yaml`. CI may still set safe environment
-overrides such as `ENABLE_SCHEDULER=false` and `DISABLE_NOTIFICATIONS=true` to
-prevent external calls during tests.
+## Configuration
 
-### Service entrypoint
+`.env` is for secrets and private identifiers only:
 
-The VPS service entrypoint is:
+```env
+TELEGRAM_BOT_TOKEN=
+ALLOWED_USER_IDS=
+DEFAULT_CHAT_ID=
+ADMIN_BEARER_TOKEN=
+```
+
+`registry.yaml` is the non-sensitive registry for service defaults:
+
+- service host, port, health path
+- data, log, and SQLite paths
+- Telegram parse mode and command timeout
+- scheduler timezone and behavior
+- deployment path and systemd service name
+
+Do not put host, port, service name, paths, scheduler defaults, or log settings
+in `.env` unless they are genuinely sensitive.
+
+If `ALLOWED_USER_IDS` is empty, Telegram commands fail closed. `/health` remains
+available on localhost.
+
+For tests and diagnostics:
 
 ```bash
-uvicorn main:app --host 127.0.0.1 --port 8030
+ENABLE_BOT=false DISABLE_TELEGRAM_SEND=true
 ```
 
-systemd uses the equivalent module form:
-
-```bash
-/opt/schedule-reminder/.venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8030
-```
-
-`main:app` is the root FastAPI control app. `GET /health` returns:
-
-```json
-{"status":"ok","service":"schedule-reminder"}
-```
-
-The existing Telegram bot and APScheduler logic are preserved in `main.py`,
-`scheduler.py`, and `workers/`. They start from the FastAPI lifespan only when
-`ENABLE_SCHEDULER=true` and `DISABLE_NOTIFICATIONS=false`. Importing `main:app`
-in CI does not start polling, APScheduler, Telegram calls, email, webhooks, or
-other external API calls.
-
-### Local development
+## Local Development
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+pip install pytest
 cp .env.example .env
 ```
 
-For a health-only local run that does not start Telegram polling, set:
+For local health-only mode:
 
 ```bash
-ENABLE_SCHEDULER=false
-uvicorn main:app --host 127.0.0.1 --port 8030
+ENABLE_BOT=false DISABLE_TELEGRAM_SEND=true \
+  uvicorn app.main:app --host 127.0.0.1 --port 8030
+```
+
+Health check:
+
+```bash
 curl -fsS http://127.0.0.1:8030/health
 ```
 
-To run the original Telegram bot directly:
+## Tests
 
 ```bash
-python main.py
+ENABLE_BOT=false DISABLE_TELEGRAM_SEND=true python -m compileall .
+ENABLE_BOT=false DISABLE_TELEGRAM_SEND=true pytest -q
 ```
 
-### Tests
+Tests cover:
 
-```bash
-python -m compileall .
-pytest -q
-```
+- `/health` without Telegram network calls
+- SQLite reminder CRUD
+- user isolation
+- absolute and relative time parsing
 
-The smoke test expects the service to be running:
+## Deployment
 
-```bash
-scripts/smoke_test.sh
-```
+The deployment target is:
 
-### VPS deployment
-
-The expected server checkout path is:
-
-```bash
+```text
 /opt/schedule-reminder
 ```
 
-Create the server environment file:
+Create the server environment:
 
 ```bash
 cd /opt/schedule-reminder
@@ -110,12 +122,10 @@ cp .env.example .env
 chmod 600 .env
 ```
 
-Edit `.env` and set real secret values for `TELEGRAM_BOT_TOKEN`, user IDs,
-tokens, and optional private AI/notification settings. Edit `registry.yaml` for
-non-sensitive defaults such as port, paths, scheduler intervals, and model name.
-Do not commit real secrets.
+Edit `.env` with real secret values. Edit `registry.yaml` for non-sensitive
+runtime defaults.
 
-Manual deploy on the VPS:
+Manual deployment:
 
 ```bash
 cd /opt/schedule-reminder
@@ -124,15 +134,32 @@ scripts/deploy.sh
 scripts/smoke_test.sh
 ```
 
-`scripts/deploy.sh` installs dependencies into `.venv`, installs the systemd
-unit, restarts `schedule-reminder`, runs a health check, prints service status,
-and exits. It recreates a broken `.venv` when `.venv/bin/python` is missing or
-not executable, and it uses `python -m pip` instead of calling `pip` directly.
-It never runs uvicorn or Python as a foreground long-running process.
+`scripts/deploy.sh` creates or repairs `.venv`, installs dependencies, runs
+compile/tests unless `SKIP_TESTS=1`, installs the systemd unit, restarts the
+service, checks `/health`, prints status, and exits. It never runs uvicorn in the
+foreground.
 
-### GitHub Actions deployment
+## systemd
 
-Add these GitHub repository secrets:
+The unit is `systemd/schedule-reminder.service`.
+
+Key command:
+
+```bash
+/opt/schedule-reminder/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8030
+```
+
+Service management:
+
+```bash
+sudo systemctl status schedule-reminder --no-pager --full
+sudo systemctl restart schedule-reminder
+sudo journalctl -u schedule-reminder -n 100 --no-pager
+```
+
+## GitHub Actions
+
+Manual deployment uses `.github/workflows/deploy.yml` and these secrets:
 
 ```text
 VPS_HOST
@@ -141,434 +168,41 @@ VPS_SSH_KEY
 VPS_PORT
 ```
 
-Run **Deploy to VPS** manually from GitHub Actions. The workflow SSHes in as
-the configured deploy user, runs `git pull --ff-only`, then executes:
+The workflow SSHes to the target, ensures `/opt/schedule-reminder` exists,
+fetches `origin/main`, hard resets the checkout to avoid local drift, then runs:
 
 ```bash
 scripts/deploy.sh
 scripts/smoke_test.sh
 ```
 
-The workflow intentionally does not switch users with sudo or su; it assumes SSH
-already logs in as `deploy`.
-
-### systemd management and logs
+## Logs
 
 ```bash
-sudo systemctl status schedule-reminder --no-pager --full
-sudo systemctl restart schedule-reminder
-sudo systemctl stop schedule-reminder
-sudo journalctl -u schedule-reminder -n 100 --no-pager
 scripts/tail_logs.sh
+sudo journalctl -u schedule-reminder -n 100 --no-pager
+tail -n 120 logs/schedule-reminder.log
 ```
 
-### Troubleshooting
+The `/logs [lines]` Telegram command reads only this bot's local log file.
 
-`.env missing`: create `/opt/schedule-reminder/.env` from `.env.example`.
+## Troubleshooting
 
-`sudo password required`: allow the `deploy` user to run the required
-`systemctl`, `cp` to `/etc/systemd/system`, and `journalctl` commands, or run
-deployment from a user with those privileges.
+`.env missing`: create it from `.env.example` and set real secrets.
 
-`git pull permission denied`: verify repository deploy keys, GitHub access, and
-ownership of `/opt/schedule-reminder`.
+`commands rejected`: set `ALLOWED_USER_IDS` to a comma-separated list of allowed
+Telegram user IDs.
 
-`service failed`: inspect `sudo systemctl --no-pager --full status
-schedule-reminder` and `sudo journalctl -u schedule-reminder -n 100 --no-pager`.
+`bot does not start`: check `TELEGRAM_BOT_TOKEN`, `ENABLE_BOT`, and journal logs.
 
-`health check failed`: verify the service listens on `127.0.0.1:8030`, then run
-`curl -fsS http://127.0.0.1:8030/health`.
+`health check failed`: run `curl -fsS http://127.0.0.1:8030/health` on the VPS
+and inspect `sudo journalctl -u schedule-reminder -n 100 --no-pager`.
 
-`scheduler not started`: check `ENABLE_SCHEDULER=true`, `TELEGRAM_BOT_TOKEN`,
-`DISABLE_NOTIFICATIONS=false`, and journal logs for startup errors. With
-`ENABLE_SCHEDULER=false` or `DISABLE_NOTIFICATIONS=true`, only the FastAPI
-health/control service starts.
+`SQLite write failure`: verify the `deploy` user can write to `data/` and
+`logs/`.
 
-`broken venv`: run `scripts/deploy.sh`; it removes and recreates `.venv` when
-`.venv/bin/python` is missing or not executable.
+`tests accidentally call Telegram`: run with
+`ENABLE_BOT=false DISABLE_TELEGRAM_SEND=true`.
 
-`accidental notification sending prevention`: set `DISABLE_NOTIFICATIONS=true`
-for CI, diagnostics, or health-only runs. That prevents the Telegram polling and
-APScheduler notification path from starting in the FastAPI service.
-
-本项目已升级为“多入口 Adapter + ops-core API + 运维 service layer”的结构。
-
-新的边界是：
-
-```text
-Telegram / Lark / Web / CLI / Agent
-        ↓
-    Adapter
-        ↓
-    ops-core HTTP API
-        ↓
-    service layer
-        ↓
-SSH / SQLite / Notification / Audit
-```
-
-Telegram Bot 不再直接执行 SSH，不再读取 `projects.yaml`，不再操作 SQLite。它只接收 Telegram 消息，调用 ops-core API，并把结果返回给用户。
-
-## 目录
-
-```text
-ops-core/
-├── main.py
-├── config.py
-├── projects.yaml
-├── api/
-│   ├── routes_projects.py
-│   ├── routes_notifications.py
-│   └── routes_commands.py
-├── core/
-│   ├── project_registry.py
-│   ├── command_router.py
-│   ├── auth_service.py
-│   ├── status_service.py
-│   ├── logs_service.py
-│   ├── notification_service.py
-│   └── audit_service.py
-├── adapters/
-│   ├── ssh_adapter.py
-│   ├── sqlite_adapter.py
-│   ├── notification_archive_adapter.py
-│   └── audit_log_adapter.py
-├── data/
-├── logs/
-├── requirements.txt
-└── redeploy.sh
-
-tg_schedule_bot/
-├── main.py
-├── handlers/
-│   └── telegram_handlers.py
-├── adapters/
-│   └── ops_api_client.py
-├── requirements.txt
-└── redeploy.sh
-```
-
-## ops-core 职责
-
-ops-core 统一负责：
-
-- `projects.yaml` 项目白名单
-- 固定 SSH 脚本执行
-- status 查询
-- logs 查询
-- notification pull
-- notification id dedup
-- Telegram notification send_message
-- audit log
-- API Token 校验
-- Telegram 用户权限校验
-- SQLite 状态存储
-
-安全边界：
-
-- 不支持任意 shell
-- 不使用 `shell=True`
-- 用户不能传 SSH 命令
-- 只执行 `projects.yaml` 中声明的 `scripts.status`、`scripts.logs`、`scripts.notifications`
-
-## ops-core 配置
-
-根目录 `.env.example` 只保留迁移提示。新部署请使用两个子项目各自的配置样例。
-
-复制配置：
-
-```bash
-cd ops-core
-cp .env.example .env
-```
-
-示例：
-
-```env
-OPS_API_TOKEN=change-me
-OPS_API_HOST=127.0.0.1
-OPS_API_PORT=8080
-ALLOWED_USER_IDS=123456789
-
-SSH_KEY_PATH=/opt/ops-core/keys/control_key
-SSH_TIMEOUT_SECONDS=10
-DEFAULT_LOG_LINES=80
-PROJECTS_CONFIG_PATH=/opt/ops-core/projects.yaml
-DATABASE_PATH=/opt/ops-core/data/ops_core.db
-LOG_DIR=/opt/ops-core/logs
-
-TELEGRAM_BOT_TOKEN=your-telegram-token
-TELEGRAM_NOTIFY_CHAT_ID=
-NOTIFICATION_PULL_LINES=50
-```
-
-`ALLOWED_USER_IDS` 为空时，ops-core 默认拒绝所有用户。
-
-## projects.yaml
-
-```yaml
-projects:
-  api-report-agent:
-    host: 8.153.80.200
-    port: 22
-    user: deploy
-    service: api-report-agent
-    scripts:
-      status: /opt/api-report-agent/scripts/status.sh
-      logs: /opt/api-report-agent/scripts/logs.sh
-      notifications: /opt/api-report-agent/scripts/notifications_tail.sh
-```
-
-后续可按项目增加更细权限：
-
-```yaml
-allowed_user_ids:
-  - 123456789
-allowed_actions:
-  - status
-  - logs
-  - pull_notifications
-```
-
-## API 调用
-
-所有请求必须带：
-
-```text
-Authorization: Bearer <OPS_API_TOKEN>
-X-Channel: telegram
-X-User-Id: 123456789
-```
-
-Telegram 手动拉取通知时还会带：
-
-```text
-X-Chat-Id: <telegram_chat_id>
-```
-
-列项目：
-
-```bash
-curl -H "Authorization: Bearer $OPS_API_TOKEN" \
-  -H "X-Channel: telegram" \
-  -H "X-User-Id: 123456789" \
-  http://127.0.0.1:8080/api/projects
-```
-
-查状态：
-
-```bash
-curl -H "Authorization: Bearer $OPS_API_TOKEN" \
-  -H "X-Channel: telegram" \
-  -H "X-User-Id: 123456789" \
-  http://127.0.0.1:8080/api/projects/api-report-agent/status
-```
-
-查日志：
-
-```bash
-curl -H "Authorization: Bearer $OPS_API_TOKEN" \
-  -H "X-Channel: telegram" \
-  -H "X-User-Id: 123456789" \
-  "http://127.0.0.1:8080/api/projects/api-report-agent/logs?lines=50"
-```
-
-拉取通知：
-
-```bash
-curl -X POST \
-  -H "Authorization: Bearer $OPS_API_TOKEN" \
-  -H "X-Channel: telegram" \
-  -H "X-User-Id: 123456789" \
-  -H "X-Chat-Id: 123456789" \
-  http://127.0.0.1:8080/api/projects/api-report-agent/pull-notifications
-```
-
-失败统一返回：
-
-```json
-{
-  "ok": false,
-  "project": "api-report-agent",
-  "action": "status",
-  "error": "ssh_timeout",
-  "message": "远程执行超时"
-}
-```
-
-## tg_schedule_bot
-
-Telegram Adapter 只依赖 ops-core：
-
-```bash
-cd tg_schedule_bot
-cp .env.example .env
-```
-
-```env
-TELEGRAM_BOT_TOKEN=
-OPS_CORE_BASE_URL=http://127.0.0.1:8080
-OPS_API_TOKEN=
-OPS_API_TIMEOUT_SECONDS=15
-```
-
-支持命令：
-
-```text
-/projects
-/status <project>
-/logs <project> [lines]
-/pull_notifications <project>
-```
-
-调用链：
-
-```text
-Telegram handler
-    ↓
-tg_schedule_bot/adapters/ops_api_client.py
-    ↓
-HTTP API
-    ↓
-ops-core
-```
-
-## 新增 Adapter
-
-未来新增 Lark、Web UI、CLI、AI Agent 时，只需要实现新的 Adapter：
-
-1. 接收对应入口的用户请求。
-2. 带上 `Authorization`、`X-Channel`、`X-User-Id`。
-3. 调用 ops-core HTTP API。
-4. 展示 API 返回。
-
-不需要修改 `ops-core/core` service layer。
-
-## SSH 与远程脚本
-
-在 ops-core 部署机生成 key：
-
-```bash
-sudo mkdir -p /opt/ops-core/keys
-sudo ssh-keygen -t ed25519 -f /opt/ops-core/keys/control_key -C "ops-core" -N ""
-sudo chmod 700 /opt/ops-core/keys
-sudo chmod 600 /opt/ops-core/keys/control_key
-```
-
-目标主机创建低权限用户并写入公钥：
-
-```bash
-sudo useradd --system --create-home --shell /bin/bash deploy
-sudo mkdir -p /home/deploy/.ssh
-sudo tee -a /home/deploy/.ssh/authorized_keys
-sudo chmod 700 /home/deploy/.ssh
-sudo chmod 600 /home/deploy/.ssh/authorized_keys
-sudo chown -R deploy:deploy /home/deploy/.ssh
-```
-
-远程脚本示例：
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-systemctl is-active api-report-agent || true
-systemctl --no-pager --full status api-report-agent | tail -n 40
-```
-
-日志脚本示例：
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-LINES="${1:-80}"
-case "$LINES" in ''|*[!0-9]*) LINES=80 ;; esac
-if [ "$LINES" -gt 300 ]; then LINES=300; fi
-journalctl -u api-report-agent -n "$LINES" --no-pager
-```
-
-通知脚本输出 JSONL，每行一条：
-
-```json
-{"id":"evt-001","level":"info","title":"Job done","time":"2026-05-10T10:00:00Z","message":"Report generated"}
-```
-
-## systemd 部署
-
-新增两个 service：
-
-- `systemd/ops_core.service`
-- `systemd/tg_schedule_bot.service`
-
-`tg_schedule_bot.service` 依赖 `ops_core.service`：
-
-```ini
-After=network-online.target ops_core.service
-Requires=ops_core.service
-```
-
-安装示例：
-
-```bash
-sudo cp systemd/ops_core.service /etc/systemd/system/ops_core.service
-sudo cp systemd/tg_schedule_bot.service /etc/systemd/system/tg_schedule_bot.service
-sudo systemctl daemon-reload
-sudo systemctl enable ops_core tg_schedule_bot
-sudo systemctl start ops_core
-sudo systemctl start tg_schedule_bot
-```
-
-查看日志：
-
-```bash
-sudo journalctl -u ops_core -f
-sudo journalctl -u tg_schedule_bot -f
-```
-
-## redeploy
-
-两个子项目都有独立 `redeploy.sh`：
-
-- `ops-core/redeploy.sh`
-- `tg_schedule_bot/redeploy.sh`
-
-根目录 `redeploy.sh` 是一个编排脚本，会按顺序调用 `/opt/ops-core/redeploy.sh` 和 `/opt/tg_schedule_bot/redeploy.sh`。也可以通过环境变量覆盖路径：
-
-```bash
-OPS_CORE_DIR=/opt/ops-core TG_BOT_DIR=/opt/tg_schedule_bot ./redeploy.sh
-```
-
-流程一致：
-
-1. `git pull`
-2. 自动创建 `.venv`
-3. `pip install -r requirements.txt`
-4. 检查必要配置
-5. `systemctl daemon-reload`
-6. restart service
-7. 写入 `deploy.log`
-
-## audit log
-
-ops-core 统一写：
-
-```text
-/opt/ops-core/logs/audit.log
-```
-
-字段：
-
-```text
-timestamp channel user_id action project success/failure duration_ms message
-```
-
-## 验收
-
-- Telegram Bot 不再直接 SSH
-- Telegram Bot 不再读取 `projects.yaml`
-- Telegram Bot 不再操作 SQLite
-- `/status api-report-agent` 走 ops-core API
-- `/logs api-report-agent 50` 走 ops-core API
-- `/pull_notifications api-report-agent` 走 ops-core API
-- notification id 通过 ops-core SQLite 去重
-- audit log 由 ops-core 写入
-- 未来新增 Lark/Web/CLI/Agent 只需要新增 Adapter
+`deployment checkout drift`: GitHub Actions uses `git reset --hard origin/main`
+and `git clean -fd` on `/opt/schedule-reminder`.
