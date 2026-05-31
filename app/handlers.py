@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from app.backend import BackendClient
 from app.config import Settings
-from app.reminder_service import USAGE, format_reminder_time, parse_reminder
-from app.reminder_store import ReminderStore
+from app.renderer import render_markup, render_text
 
 
 MAX_LOG_LINES = 200
@@ -26,124 +24,101 @@ async def _reject(update: Update, settings: Settings) -> bool:
     return True
 
 
-def _deps(context: ContextTypes.DEFAULT_TYPE) -> tuple[Settings, ReminderStore]:
-    return context.application.bot_data["settings"], context.application.bot_data["store"]
+def _settings(context: ContextTypes.DEFAULT_TYPE) -> Settings:
+    return context.application.bot_data["settings"]
+
+
+def _backend(context: ContextTypes.DEFAULT_TYPE) -> BackendClient:
+    return context.application.bot_data["backend"]
+
+
+async def _send_backend(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    action: str,
+    payload: dict,
+) -> None:
+    settings = _settings(context)
+    if await _reject(update, settings):
+        return
+    response = await _backend(context).handle(action, payload)
+    text = render_text(response)
+    markup = render_markup(response)
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text(text=text, reply_markup=markup, parse_mode="HTML")
+    elif update.message:
+        await update.message.reply_text(text=text, reply_markup=markup, parse_mode="HTML")
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    settings, _ = _deps(context)
-    if await _reject(update, settings):
-        return
-    await update.message.reply_text(_help_text())
+    await _send_backend(update, context, "nav:home", _payload(update, context))
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    settings, _ = _deps(context)
-    if await _reject(update, settings):
-        return
-    await update.message.reply_text(_help_text())
+    await _send_backend(update, context, "mock:demo", _payload(update, context))
 
 
 async def remind(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    settings, store = _deps(context)
-    if await _reject(update, settings):
-        return
-    if update.effective_user is None or update.effective_chat is None or update.message is None:
-        return
-    raw = " ".join(context.args)
-    try:
-        parsed = parse_reminder(raw, settings.timezone)
-    except ValueError:
-        await update.message.reply_text(USAGE)
-        return
-    reminder = store.create(
-        user_id=str(update.effective_user.id),
-        chat_id=str(update.effective_chat.id),
-        text=parsed.text,
-        remind_at=parsed.remind_at.isoformat(),
-        timezone_name=parsed.timezone_name,
-    )
-    await update.message.reply_text(
-        f"Created reminder #{reminder.id}: "
-        f"{format_reminder_time(reminder.remind_at, reminder.timezone)}"
-    )
+    payload = _payload(update, context)
+    payload["text"] = " ".join(context.args)
+    await _send_backend(update, context, "reminder:create", payload)
 
 
 async def list_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    settings, store = _deps(context)
-    if await _reject(update, settings):
-        return
-    if update.effective_user is None or update.message is None:
-        return
-    reminders = store.list_for_user(str(update.effective_user.id))
-    if not reminders:
-        await update.message.reply_text("No active or paused reminders.")
-        return
-    lines = [
-        f"#{item.id} [{item.status}] {format_reminder_time(item.remind_at, item.timezone)} - {item.text}"
-        for item in reminders
-    ]
-    await update.message.reply_text("\n".join(lines))
+    await _send_backend(update, context, "mock:reminders", _payload(update, context))
 
 
 async def delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _set_status(update, context, "deleted", "Deleted")
+    payload = _payload(update, context)
+    payload["id"] = _first_arg(context)
+    await _send_backend(update, context, "reminder:delete", payload)
 
 
 async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _set_status(update, context, "paused", "Paused")
+    payload = _payload(update, context)
+    payload["id"] = _first_arg(context)
+    await _send_backend(update, context, "reminder:pause", payload)
 
 
 async def resume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _set_status(update, context, "active", "Resumed")
+    payload = _payload(update, context)
+    payload["id"] = _first_arg(context)
+    await _send_backend(update, context, "reminder:resume", payload)
 
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    settings, store = _deps(context)
-    if await _reject(update, settings):
-        return
-    counts = store.counts()
-    await update.message.reply_text(
-        "schedule-reminder status\n"
-        f"service={settings.service_name}\n"
-        f"bot_enabled={settings.enable_bot}\n"
-        f"telegram_send_disabled={settings.disable_telegram_send}\n"
-        f"counts={counts}"
-    )
+    await _send_backend(update, context, "system:adapter_status", _payload(update, context))
 
 
 async def logs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    settings, _ = _deps(context)
+    settings = _settings(context)
     if await _reject(update, settings):
         return
     lines = _parse_lines(context.args)
-    text = _tail_file(settings.log_file, lines)
-    await update.message.reply_text(text or "No local log output yet.")
+    text = _tail_file(settings.log_file, lines) or "No local log output yet."
+    if update.message:
+        await update.message.reply_text(text[-3500:])
 
 
-async def _set_status(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, new_status: str, label: str
-) -> None:
-    settings, store = _deps(context)
-    if await _reject(update, settings):
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.callback_query is None:
         return
-    if update.effective_user is None or update.message is None:
-        return
-    reminder_id = _first_int(context.args)
-    if reminder_id is None:
-        await update.message.reply_text("Usage: /delete <id> or /pause <id> or /resume <id>")
-        return
-    ok = store.set_status_for_user(reminder_id, str(update.effective_user.id), new_status)
-    await update.message.reply_text(f"{label} reminder #{reminder_id}." if ok else "Reminder not found.")
+    action = update.callback_query.data or "mock:home"
+    await _send_backend(update, context, action, _payload(update, context))
 
 
-def _first_int(args: list[str]) -> int | None:
-    if not args:
-        return None
-    try:
-        return int(args[0])
-    except ValueError:
-        return None
+def _payload(update: Update, context: ContextTypes.DEFAULT_TYPE) -> dict:
+    return {
+        "user_id": str(update.effective_user.id) if update.effective_user else "",
+        "chat_id": str(update.effective_chat.id) if update.effective_chat else "",
+        "request": update.effective_message.text if update.effective_message else "",
+        "args": list(context.args),
+    }
+
+
+def _first_arg(context: ContextTypes.DEFAULT_TYPE) -> str | None:
+    return context.args[0] if context.args else None
 
 
 def _parse_lines(args: list[str]) -> int:
@@ -155,25 +130,9 @@ def _parse_lines(args: list[str]) -> int:
         return 80
 
 
-def _tail_file(path: Path, lines: int) -> str:
+def _tail_file(path, lines: int) -> str:
     if not path.exists():
         return ""
     with path.open("r", encoding="utf-8", errors="replace") as file:
         content = file.readlines()[-lines:]
-    return "".join(content)[-3500:]
-
-
-def _help_text() -> str:
-    return (
-        "schedule-reminder commands:\n"
-        "/remind 2026-06-01 09:30 Take medicine\n"
-        "/remind 2026-06-01 09:30 Asia/Shanghai Take medicine\n"
-        "/remind in 10m Take a break\n"
-        "/remind in 2h Check report\n"
-        "/list\n"
-        "/pause <id>\n"
-        "/resume <id>\n"
-        "/delete <id>\n"
-        "/status\n"
-        "/logs [lines]"
-    )
+    return "".join(content)

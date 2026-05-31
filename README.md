@@ -4,6 +4,15 @@
 reminder functionality: Telegram commands, SQLite persistence, a scheduler,
 health checks, logs, tests, and venv + systemd deployment.
 
+The Telegram adapter also supports backend diagnostic modes for environments
+where an external ops-core-style interaction backend is used:
+
+- `ops`: call only the real backend and show an unavailable screen on failure.
+- `mock`: never call the backend; render local diagnostic/demo UI only.
+- `fallback`: try the backend first, then degrade to mock UI when unavailable.
+
+Mock/fallback screens never claim that real business actions succeeded.
+
 This project does not manage other services. It does not SSH into other hosts.
 It does not read other projects' logs. Future ops-core or multi-project control
 planes should be implemented in a separate repository.
@@ -47,6 +56,8 @@ TELEGRAM_BOT_TOKEN=
 ALLOWED_USER_IDS=
 DEFAULT_CHAT_ID=
 ADMIN_BEARER_TOKEN=
+OPS_CORE_BASE_URL=
+OPS_CORE_TOKEN=
 ```
 
 `registry.yaml` is the non-sensitive registry for service defaults:
@@ -56,6 +67,7 @@ ADMIN_BEARER_TOKEN=
 - Telegram parse mode and command timeout
 - scheduler timezone and behavior
 - deployment path and systemd service name
+- backend mode, backend paths, mock banner, and mock behavior
 
 Do not put host, port, service name, paths, scheduler defaults, or log settings
 in `.env` unless they are genuinely sensitive.
@@ -66,7 +78,7 @@ available on localhost.
 For tests and diagnostics:
 
 ```bash
-ENABLE_BOT=false DISABLE_TELEGRAM_SEND=true
+ENABLE_BOT=false DISABLE_TELEGRAM_SEND=true BACKEND_MODE=mock
 ```
 
 ## Local Development
@@ -90,7 +102,12 @@ Health check:
 
 ```bash
 curl -fsS http://127.0.0.1:8030/health
+curl -fsS http://127.0.0.1:8030/health/backend
 ```
+
+`/health` reports adapter health only and stays `ok` even when the backend is
+down. `/health/backend` checks backend health and returns `degraded` when the
+backend is unavailable. Secrets are never returned.
 
 ## Tests
 
@@ -102,6 +119,10 @@ ENABLE_BOT=false DISABLE_TELEGRAM_SEND=true pytest -q
 Tests cover:
 
 - `/health` without Telegram network calls
+- `/health/backend` degraded when backend is unavailable
+- backend mode selection and fallback to mock UI
+- mock responses include a visible mock/degraded banner
+- renderer handles mock responses like live UI responses
 - SQLite reminder CRUD
 - user isolation
 - absolute and relative time parsing

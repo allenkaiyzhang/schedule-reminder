@@ -20,6 +20,18 @@ telegram:
   parse_mode: HTML
   command_timeout_seconds: 10
 
+backend:
+  mode: fallback
+  timeout_seconds: 5
+  interaction_path: /api/interactions/telegram
+  health_path: /health
+  show_mock_banner: true
+
+mock:
+  enabled: true
+  allow_demo_actions: true
+  banner: "MOCK MODE - ops-core business actions are unavailable"
+
 scheduler:
   timezone: Asia/Shanghai
   max_instances: 1

@@ -78,6 +78,16 @@ class Settings:
     allowed_user_ids: set[str]
     default_chat_id: str
     admin_bearer_token: str
+    ops_core_base_url: str
+    ops_core_token: str
+    backend_mode: str
+    backend_timeout_seconds: float
+    backend_interaction_path: str
+    backend_health_path: str
+    backend_show_mock_banner: bool
+    mock_enabled: bool
+    mock_allow_demo_actions: bool
+    mock_banner: str
     enable_bot: bool
     disable_telegram_send: bool
     scheduler_max_instances: int
@@ -106,6 +116,20 @@ def get_settings() -> Settings:
         allowed_user_ids=_csv_env("ALLOWED_USER_IDS"),
         default_chat_id=os.getenv("DEFAULT_CHAT_ID", "").strip(),
         admin_bearer_token=os.getenv("ADMIN_BEARER_TOKEN", "").strip(),
+        ops_core_base_url=os.getenv("OPS_CORE_BASE_URL", "http://127.0.0.1:8080").rstrip("/"),
+        ops_core_token=os.getenv("OPS_CORE_TOKEN", "").strip(),
+        backend_mode=os.getenv("BACKEND_MODE", _str(registry, "backend.mode", "fallback")).strip().lower(),
+        backend_timeout_seconds=float(os.getenv("BACKEND_TIMEOUT_SECONDS", _str(registry, "backend.timeout_seconds", "5"))),
+        backend_interaction_path=_str(registry, "backend.interaction_path", "/api/interactions/telegram"),
+        backend_health_path=_str(registry, "backend.health_path", "/health"),
+        backend_show_mock_banner=_bool(registry, "backend.show_mock_banner", True),
+        mock_enabled=_bool(registry, "mock.enabled", True),
+        mock_allow_demo_actions=_bool(registry, "mock.allow_demo_actions", True),
+        mock_banner=_str(
+            registry,
+            "mock.banner",
+            "MOCK MODE - ops-core business actions are unavailable",
+        ),
         enable_bot=_bool_env("ENABLE_BOT", _bool(registry, "telegram.enable_bot", True)),
         disable_telegram_send=_bool_env(
             "DISABLE_TELEGRAM_SEND", _bool(registry, "telegram.disable_send", False)

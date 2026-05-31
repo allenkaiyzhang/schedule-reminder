@@ -7,6 +7,7 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 from telegram.ext import Application
 
+from app.backend import build_backend_client
 from app.bot import build_bot
 from app.config import get_settings
 from app.logging_config import setup_logging
@@ -24,13 +25,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     settings.log_dir.mkdir(parents=True, exist_ok=True)
     store = ReminderStore(settings.sqlite_path)
+    backend = build_backend_client(settings)
     app.state.settings = settings
     app.state.store = store
+    app.state.backend = backend
 
     bot_app: Application | None = None
     scheduler: ReminderScheduler | None = None
     if settings.enable_bot:
-        bot_app = build_bot(settings, store)
+        bot_app = build_bot(settings, store, backend)
         await bot_app.initialize()
         if bot_app.updater is None:
             raise RuntimeError("Telegram updater is not available")
@@ -67,4 +70,26 @@ app = FastAPI(title="schedule-reminder", version="1.0.0", lifespan=lifespan)
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "service": "schedule-reminder"}
+    settings = get_settings()
+    return {
+        "status": "ok",
+        "service": "schedule-reminder",
+        "role": "telegram-adapter",
+        "backend_mode": settings.backend_mode,
+    }
+
+
+@app.get("/health/backend")
+async def backend_health() -> dict[str, object]:
+    settings = get_settings()
+    backend = build_backend_client(settings)
+    health = await backend.health()
+    return {
+        "status": health.status,
+        "service": "schedule-reminder",
+        "role": "telegram-adapter",
+        "backend_mode": settings.backend_mode,
+        "ops_core_base_url": health.ops_core_base_url,
+        "last_success": health.last_success,
+        "last_error": health.last_error,
+    }
