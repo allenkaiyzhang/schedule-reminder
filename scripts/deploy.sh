@@ -4,6 +4,7 @@ set -euo pipefail
 SERVICE_NAME="${SERVICE_NAME:-schedule-reminder}"
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_DIR="${VENV_DIR:-$PROJECT_ROOT/.venv}"
+PYTHON="$VENV_DIR/bin/python"
 LOG_FILE="${LOG_FILE:-$PROJECT_ROOT/deploy.log}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8030/health}"
 
@@ -30,12 +31,14 @@ if [[ ! -f "$PROJECT_ROOT/systemd/$SERVICE_NAME.service" ]]; then
   exit 1
 fi
 
-if [[ ! -d "$VENV_DIR" ]]; then
+if [[ ! -x "$PYTHON" ]]; then
+  echo "Python executable missing or broken in $VENV_DIR; recreating venv."
+  rm -rf "$VENV_DIR"
   python3 -m venv "$VENV_DIR"
 fi
 
-"$VENV_DIR/bin/pip" install -U pip
-"$VENV_DIR/bin/pip" install -r "$PROJECT_ROOT/requirements.txt"
+"$PYTHON" -m pip install -U pip
+"$PYTHON" -m pip install -r "$PROJECT_ROOT/requirements.txt"
 
 sudo cp "$PROJECT_ROOT/systemd/$SERVICE_NAME.service" "/etc/systemd/system/$SERVICE_NAME.service"
 sudo systemctl daemon-reload

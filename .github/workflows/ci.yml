@@ -11,6 +11,11 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      ENABLE_SCHEDULER: "false"
+      DISABLE_NOTIFICATIONS: "true"
+      API_TOKEN: test-token
+      PYTHONPATH: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
 
@@ -31,6 +36,11 @@ jobs:
         run: |
           . .venv/bin/activate
           python -m compileall .
+
+      - name: Diagnostic import
+        run: |
+          . .venv/bin/activate
+          python -c "import main; print('Imported main:', hasattr(main, 'app'))"
 
       - name: Run tests
         run: |

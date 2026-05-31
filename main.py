@@ -47,18 +47,26 @@ def _env_bool(name: str, default: bool = False) -> bool:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     telegram_application: Application | None = None
     scheduler_enabled = _env_bool("ENABLE_SCHEDULER", False)
+    notifications_disabled = _env_bool("DISABLE_NOTIFICATIONS", False)
     app.state.scheduler_enabled = scheduler_enabled
+    app.state.notifications_disabled = notifications_disabled
 
-    if scheduler_enabled:
+    if scheduler_enabled and not notifications_disabled:
         telegram_application = build_application()
         await telegram_application.initialize()
-        await _post_init(telegram_application)
-        await telegram_application.start()
+        if telegram_application.post_init:
+            await telegram_application.post_init(telegram_application)
         if telegram_application.updater is None:
             raise RuntimeError("Telegram updater is not available")
         await telegram_application.updater.start_polling(allowed_updates=["message"])
+        await telegram_application.start()
         app.state.telegram_application = telegram_application
         logger.info("schedule-reminder service started with Telegram polling enabled")
+    elif scheduler_enabled and notifications_disabled:
+        logger.info(
+            "schedule-reminder service started with scheduler disabled because "
+            "DISABLE_NOTIFICATIONS=true"
+        )
     else:
         logger.info("schedule-reminder service started with scheduler disabled")
 
@@ -66,11 +74,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         if telegram_application is not None:
-            if telegram_application.updater is not None:
+            if (
+                telegram_application.updater is not None
+                and telegram_application.updater.running
+            ):
                 await telegram_application.updater.stop()
-            await telegram_application.stop()
-            await _post_shutdown(telegram_application)
+            if telegram_application.running:
+                await telegram_application.stop()
             await telegram_application.shutdown()
+            if telegram_application.post_shutdown:
+                await telegram_application.post_shutdown(telegram_application)
 
 
 app = FastAPI(title="schedule-reminder", version="0.1.0", lifespan=lifespan)

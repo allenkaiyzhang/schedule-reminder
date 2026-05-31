@@ -14,6 +14,12 @@ The VPS service entrypoint is:
 uvicorn main:app --host 127.0.0.1 --port 8030
 ```
 
+systemd uses the equivalent module form:
+
+```bash
+/opt/schedule-reminder/.venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8030
+```
+
 `main:app` is the root FastAPI control app. `GET /health` returns:
 
 ```json
@@ -22,8 +28,9 @@ uvicorn main:app --host 127.0.0.1 --port 8030
 
 The existing Telegram bot and APScheduler logic are preserved in `main.py`,
 `scheduler.py`, and `workers/`. They start from the FastAPI lifespan only when
-`ENABLE_SCHEDULER=true`. Importing `main:app` in CI does not start polling,
-APScheduler, Telegram calls, email, webhooks, or other external API calls.
+`ENABLE_SCHEDULER=true` and `DISABLE_NOTIFICATIONS=false`. Importing `main:app`
+in CI does not start polling, APScheduler, Telegram calls, email, webhooks, or
+other external API calls.
 
 ### Local development
 
@@ -91,7 +98,9 @@ scripts/smoke_test.sh
 
 `scripts/deploy.sh` installs dependencies into `.venv`, installs the systemd
 unit, restarts `schedule-reminder`, runs a health check, prints service status,
-and exits. It never runs uvicorn or Python as a foreground long-running process.
+and exits. It recreates a broken `.venv` when `.venv/bin/python` is missing or
+not executable, and it uses `python -m pip` instead of calling `pip` directly.
+It never runs uvicorn or Python as a foreground long-running process.
 
 ### GitHub Actions deployment
 
@@ -112,8 +121,8 @@ scripts/deploy.sh
 scripts/smoke_test.sh
 ```
 
-The workflow intentionally does not use `sudo -iu deploy`, `sudo -u deploy`, or
-`su - deploy`; it assumes SSH already logs in as `deploy`.
+The workflow intentionally does not switch users with sudo or su; it assumes SSH
+already logs in as `deploy`.
 
 ### systemd management and logs
 
@@ -143,8 +152,16 @@ schedule-reminder` and `sudo journalctl -u schedule-reminder -n 100 --no-pager`.
 `curl -fsS http://127.0.0.1:8030/health`.
 
 `scheduler not started`: check `ENABLE_SCHEDULER=true`, `TELEGRAM_BOT_TOKEN`,
-and journal logs for startup errors. With `ENABLE_SCHEDULER=false`, only the
-FastAPI health/control service starts.
+`DISABLE_NOTIFICATIONS=false`, and journal logs for startup errors. With
+`ENABLE_SCHEDULER=false` or `DISABLE_NOTIFICATIONS=true`, only the FastAPI
+health/control service starts.
+
+`broken venv`: run `scripts/deploy.sh`; it removes and recreates `.venv` when
+`.venv/bin/python` is missing or not executable.
+
+`accidental notification sending prevention`: set `DISABLE_NOTIFICATIONS=true`
+for CI, diagnostics, or health-only runs. That prevents the Telegram polling and
+APScheduler notification path from starting in the FastAPI service.
 
 本项目已升级为“多入口 Adapter + ops-core API + 运维 service layer”的结构。
 
@@ -241,7 +258,7 @@ cp .env.example .env
 
 ```env
 OPS_API_TOKEN=change-me
-OPS_API_HOST=0.0.0.0
+OPS_API_HOST=127.0.0.1
 OPS_API_PORT=8080
 ALLOWED_USER_IDS=123456789
 
