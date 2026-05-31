@@ -1,0 +1,63 @@
+# Non-sensitive registry for schedule-reminder.
+# Keep tokens, API keys, chat ids, and user ids in .env only.
+service:
+  name: schedule-reminder
+  target: vps
+  runtime_user: deploy
+  server_path: /opt/schedule-reminder
+  host: 127.0.0.1
+  port: 8030
+  health_path: /health
+  timezone: America/Los_Angeles
+  log_level: INFO
+
+python:
+  version: "3.11"
+  venv_dir: .venv
+
+storage:
+  data_dir: /opt/schedule-reminder/data
+  log_dir: /opt/schedule-reminder/logs
+  database_path: /opt/schedule-reminder/data/schedule.db
+  sqlite_busy_timeout_ms: 5000
+
+scheduler:
+  enabled: true
+  check_interval_seconds: 30
+  default_remind_before_minutes: [30, 10, 0]
+  morning_summary_hour: 8
+  evening_summary_hour: 22
+
+notifications:
+  disable_sending: false
+  pull_enabled: false
+  pull_interval_seconds: 120
+  pull_projects: [api-report-agent]
+  pull_lines: 50
+
+ai:
+  provider: disabled
+  base_url: ""
+  model: ""
+  timeout_seconds: 20
+
+ops:
+  ssh_key_path: /opt/schedule-reminder/keys/control_key
+  ssh_timeout_seconds: 10
+  default_log_lines: 80
+  projects_config_path: /opt/schedule-reminder/projects.yaml
+
+github_actions:
+  secrets_prefix: VPS
+  secrets:
+    host: VPS_HOST
+    user: VPS_USER
+    ssh_key: VPS_SSH_KEY
+    port: VPS_PORT
+  concurrency_group: schedule-reminder-vps-deploy
+
+systemd:
+  unit: schedule-reminder.service
+  description: Schedule Reminder
+  restart: always
+  restart_sec: 5

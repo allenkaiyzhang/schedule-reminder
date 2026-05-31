@@ -6,6 +6,32 @@ This repository can also run as a single `schedule-reminder` service on a VPS.
 The deploy target is `/opt/schedule-reminder`, using Python 3.11+, venv,
 systemd, and a local health endpoint.
 
+### Configuration registry
+
+Non-sensitive configuration lives in `registry.yaml`. This file is the project
+registry for values that are shared, repeated, or operationally useful:
+
+- service name, target, runtime user, server path, host, port, health path
+- Python version and venv directory
+- data/log/database paths
+- scheduler intervals, reminder defaults, summary hours, timezone
+- notification pull settings that are not secrets
+- AI provider/model/base URL/timeout, but not the API key
+- systemd metadata and GitHub Actions secret names
+
+`.env` is reserved for sensitive deployment values only:
+
+- Telegram bot token
+- API keys and bearer tokens
+- chat IDs and allowed user IDs
+- webhook URLs or other private integration endpoints
+
+Rule for future changes: add non-sensitive settings to `registry.yaml`; add only
+secrets or restricted identifiers to `.env`. The root service reads its default
+runtime settings from `registry.yaml`. CI may still set safe environment
+overrides such as `ENABLE_SCHEDULER=false` and `DISABLE_NOTIFICATIONS=true` to
+prevent external calls during tests.
+
 ### Service entrypoint
 
 The VPS service entrypoint is:
@@ -84,8 +110,10 @@ cp .env.example .env
 chmod 600 .env
 ```
 
-Edit `.env` and set real values for `TELEGRAM_BOT_TOKEN`, user IDs, and any
-optional AI/notification settings. Do not commit real secrets.
+Edit `.env` and set real secret values for `TELEGRAM_BOT_TOKEN`, user IDs,
+tokens, and optional private AI/notification settings. Edit `registry.yaml` for
+non-sensitive defaults such as port, paths, scheduler intervals, and model name.
+Do not commit real secrets.
 
 Manual deploy on the VPS:
 

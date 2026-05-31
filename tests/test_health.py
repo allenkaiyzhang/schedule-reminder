@@ -1,3 +1,8 @@
+import os
+
+os.environ["ENABLE_SCHEDULER"] = "false"
+os.environ["DISABLE_NOTIFICATIONS"] = "true"
+
 from fastapi.testclient import TestClient
 
 from main import app

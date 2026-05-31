@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 from ai import build_ai_provider
-from config import Settings, get_settings
+from config import Settings, get_registry_bool, get_settings
 from db import Database
 from handlers import (
     add_schedule,
@@ -46,8 +46,13 @@ def _env_bool(name: str, default: bool = False) -> bool:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     telegram_application: Application | None = None
-    scheduler_enabled = _env_bool("ENABLE_SCHEDULER", False)
-    notifications_disabled = _env_bool("DISABLE_NOTIFICATIONS", False)
+    scheduler_enabled = _env_bool(
+        "ENABLE_SCHEDULER", get_registry_bool("scheduler.enabled", False)
+    )
+    notifications_disabled = _env_bool(
+        "DISABLE_NOTIFICATIONS",
+        get_registry_bool("notifications.disable_sending", False),
+    )
     app.state.scheduler_enabled = scheduler_enabled
     app.state.notifications_disabled = notifications_disabled
 
