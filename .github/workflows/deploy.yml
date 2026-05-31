@@ -1,12 +1,63 @@
 name: Deploy to VPS
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: schedule-reminder-vps-deploy
+  cancel-in-progress: true
+
 jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ENABLE_SCHEDULER: "false"
+      DISABLE_NOTIFICATIONS: "true"
+      API_TOKEN: test-token
+      PYTHONPATH: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          python -m pip install -U pip
+          if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then python -m pip install -r requirements-dev.txt; fi
+          python -m pip install pytest
+
+      - name: Compile Python files
+        run: |
+          . .venv/bin/activate
+          python -m compileall .
+
+      - name: Diagnostic import
+        run: |
+          . .venv/bin/activate
+          python -c "import main; print('Imported main:', hasattr(main, 'app'))"
+
+      - name: Run tests
+        run: |
+          . .venv/bin/activate
+          if [ -d tests ]; then
+            pytest -q
+          else
+            echo "No tests directory, skipping pytest."
+          fi
+
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    needs: ci
+    if: github.ref == 'refs/heads/main'
     steps:
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.0.3
@@ -20,6 +71,6 @@ jobs:
             whoami
             cd /opt/schedule-reminder
             git pull --ff-only
-            chmod +x scripts/deploy.sh scripts/smoke_test.sh
+            chmod +x scripts/deploy.sh scripts/smoke_test.sh scripts/tail_logs.sh
             scripts/deploy.sh
             scripts/smoke_test.sh
